@@ -1293,17 +1293,30 @@ function aplicarDatos(d) {
   if (Array.isArray(d.sessions)) S.sessions = d.sessions;
 }
 
+var _pendingSave = false;
+
 function save() {
   try { localStorage.setItem(LS_KEY, JSON.stringify({
     auth: S.auth, currentSession: S.currentSession, selectedIds: S.selectedIds
   })); } catch(e) {}
 
-  if (!_autoSaveEnabled) { dbg('save() bloqueado — Firebase aún no cargó'); return; }
-  if (_applyingRemote)   { dbg('save() bloqueado — aplicando datos remotos'); return; }
+  if (_applyingRemote) { dbg('save() diferido — aplicando datos remotos'); return; }
+
+  if (!_autoSaveEnabled) {
+    _pendingSave = true;
+    setSyncStatus('⏳ Pendiente...', '#d29922');
+    dbg('save() encolado — Firebase aún no cargó');
+    return;
+  }
+
+  _pendingSave = false;
+  _ejecutarSave();
+}
+
+function _ejecutarSave() {
   if (S.catalog.length === 0 && S.sessions.length === 0 && _lastRemoteTs > 0) {
     dbg('save() bloqueado — datos vacíos pero Firebase tenía datos'); return;
   }
-
   var ahora = Date.now();
   _miUltimoBatch = ahora;
   var snap = { version:1, ts:ahora, catalog:S.catalog, sessions:S.sessions };
@@ -1363,7 +1376,15 @@ function iniciarPolling() {
   }, 5000);
 }
 
-function habilitarAutoSave() { _autoSaveEnabled = true; dbg('AutoSave ON'); }
+function habilitarAutoSave() {
+  _autoSaveEnabled = true;
+  dbg('AutoSave ON');
+  if (_pendingSave) {
+    dbg('Ejecutando guardado pendiente...');
+    _pendingSave = false;
+    _ejecutarSave();
+  }
+}
 
 function seedCatalog() {
   // Catálogo vacío — importa el personal desde Personal → Importar CSV
