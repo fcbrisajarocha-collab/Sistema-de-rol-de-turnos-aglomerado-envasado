@@ -441,6 +441,7 @@ td.c{text-align:center}
           <option value="Aaron Huerta Cruz">Aaron Huerta Cruz</option>
           <option value="Jose Luis Hernandez Ramirez">Jose Luis Hernandez Ramirez</option>
           <option value="Germain Apale Jorge">Germain Apale Jorge</option>
+          <option value="Samuel Cortes Beltran">Samuel Cortes Beltran</option>
         </select>
       </div>
       <div class="login-field" style="position:relative">
@@ -1168,6 +1169,7 @@ const SUPERVISORS = [
   {id:'sv1', user:'Aaron Huerta Cruz',               pass:'50864', name:'Aaron Huerta Cruz',               turno:1, area:'Supervisor de Envasado'},
   {id:'sv2', user:'Jose Luis Hernandez Ramirez',     pass:'50280', name:'Jose Luis Hernandez Ramirez',     turno:2, area:'Supervisor de Envasado'},
   {id:'sv3', user:'Germain Apale Jorge',             pass:'50902', name:'Germain Apale Jorge',             turno:2, area:'Supervisor de Envasado'},
+  {id:'sv4', user:'Samuel Cortes Beltran',           pass:'SamCor2026', name:'Samuel Cortes Beltran',           turno:3, area:'Supervisor de Envasado'},
 ];
 
 const PROCESSES = [
@@ -1585,7 +1587,7 @@ function doLogin() {
   }
 
   // Buscar en la tabla de supervisores
-  const sv = SUPERVISORS.find(s => s.user.toLowerCase()===userVal && s.pass===passVal);
+  const sv = SUPERVISORS.find(s => s.user.toLowerCase()===userVal && verifyPassword(s.id, passVal));
   if (!sv) {
     errEl.textContent = 'Usuario o contraseña incorrectos. Verifica tus datos.';
     errEl.classList.add('show');
@@ -1847,11 +1849,17 @@ function renderPicklistSessionInfo() {
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:0 8px">
       <label style="font-size:10px;font-weight:600;color:var(--tx3);letter-spacing:.4px;text-transform:uppercase">Fecha de captura</label>
-      <input type="date" id="session-date-picker" value="${sessDate}" onchange="changeSessionDate(this.value)"
-        style="padding:6px 10px;border:1px solid var(--brd);border-radius:7px;font-size:12px;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);cursor:pointer">
-      <button class="btn btn-ghost btn-sm" onclick="changeSessionDate(todayStr())" title="Volver a hoy" style="padding:5px 9px">
-        Hoy
-      </button>
+      ${(function(){
+        var _auth = S.auth;
+        var _autorizados = ['sv0','sv2','sv3'];
+        var _canBack = _autorizados.indexOf(_auth && _auth.svId) >= 0;
+        if (_canBack) {
+          return '<input type="date" id="session-date-picker" value="'+sessDate+'" onchange="changeSessionDate(this.value)" style="padding:6px 10px;border:1px solid var(--brd);border-radius:7px;font-size:12px;font-family:DM Sans,sans-serif;background:var(--bg);color:var(--tx);cursor:pointer">'
+            + '<button class="btn btn-ghost btn-sm" onclick="changeSessionDate(todayStr())" title="Volver a hoy" style="padding:5px 9px">Hoy</button>';
+        } else {
+          return '<span style="font-size:12px;font-weight:600;color:var(--tx2);padding:6px 10px;background:var(--bg2);border-radius:7px;border:1px solid var(--brd)">' + sessDate + '</span>';
+        }
+      })()}
     </div>
   </div>`;
 }
@@ -1870,7 +1878,15 @@ function changeSessionDate(newDate) {
   // Verificar que la fecha no sea futura
   if (newDate > todayStr()) {
     alert('No puedes capturar asistencia de una fecha futura.');
-    // Restaurar el valor
+    const dp = document.getElementById('session-date-picker');
+    const cur = S.sessions.find(s=>s.id===S.currentSession);
+    if (dp && cur) dp.value = cur.date;
+    return;
+  }
+  // Verificar autorización para fechas anteriores
+  var _autorizados = ['sv0','sv2','sv3'];
+  if (newDate < todayStr() && _autorizados.indexOf(S.auth && S.auth.svId) < 0) {
+    alert('No tienes permiso para registrar asistencia de días anteriores.');
     const dp = document.getElementById('session-date-picker');
     const cur = S.sessions.find(s=>s.id===S.currentSession);
     if (dp && cur) dp.value = cur.date;
@@ -3133,6 +3149,8 @@ function _renderAfterLoad() {
 }
 
 function init() {
+  loadAuthPasswords();
+  loadAuthPasswords(); // Cargar contraseñas actualizadas desde Firebase
   load();
   initLoginShifts();
   renderProcGrid();
@@ -3202,6 +3220,96 @@ init();
   const el=document.getElementById(id);
   if(el) el.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 });
+
+/* ══ CONTRASEÑAS FIREBASE ══ */
+var _authCache = null;
+var _AUTH_URL = 'https://firestore.googleapis.com/v1/projects/upav-docente/databases/(default)/documents/cafiver_auth/usuarios?key=AIzaSyBjcblj8HNjK8aNZc5PGCTuUYYGopkAmHk';
+
+function loadAuthPasswords() {
+  fetch(_AUTH_URL)
+    .then(function(r){
+      if(r.status===403||r.status===404||!r.ok){ _authCache=null; return null; }
+      return r.json();
+    })
+    .then(function(d){
+      if(!d||!d.fields){ _authCache=null; return; }
+      _authCache={};
+      var arr=fromFSValue(d.fields.usuarios)||[];
+      arr.forEach(function(u){ if(u&&u.id) _authCache[u.id]=u.pass; });
+    })
+    .catch(function(){ _authCache=null; });
+}
+
+function saveAuthPasswords(cb) {
+  if(!_authCache) _authCache={};
+  var arr=Object.entries(_authCache).map(function(e){return{id:e[0],pass:e[1]};});
+  var snap={usuarios:arr};
+  var keys=Object.keys(snap).map(function(k){return 'updateMask.fieldPaths='+k;}).join('&');
+  var url=_AUTH_URL.replace('?key=','?'+keys+'&key=');
+  fetch(url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(objToFS(snap))})
+    .then(function(){if(cb)cb(null);})
+    .catch(function(e){if(cb)cb(e);});
+}
+
+function verifyPassword(svId, passInput) {
+  if(_authCache!==null && _authCache[svId]!==undefined) return _authCache[svId]===passInput;
+  var sv=SUPERVISORS.find(function(s){return s.id===svId;});
+  return sv ? sv.pass===passInput : false;
+}
+
+function openChangePassword() {
+  if(document.getElementById('pwd-overlay')) return;
+  var isAdmin = S.auth && S.auth.svId==='sv0';
+  var ov=document.createElement('div');
+  ov.id='pwd-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;display:flex;align-items:center;justify-content:center';
+  var opts=isAdmin ? SUPERVISORS.map(function(s){return '<option value="'+s.id+'">'+s.name+'</option>';}).join('') : '';
+  var inner=document.createElement('div');
+  inner.style.cssText='background:#fff;border-radius:16px;padding:28px;width:360px;box-shadow:0 24px 64px rgba(0,0,0,.25);font-family:DM Sans,sans-serif';
+  inner.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">'
+    +'<b style="font-size:16px;color:#0f172a">🔒 Cambiar contraseña</b>'
+    +'<button id="pwd-close-btn" style="background:#f1f5f9;border:none;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;color:#64748b">✕</button>'
+    +'</div>'
+    +(isAdmin ? '<div style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;display:block;margin-bottom:4px">Usuario</label>'
+      +'<select id="pwd-target" style="width:100%;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none">'+opts+'</select></div>' : '')
+    +'<div style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;display:block;margin-bottom:4px">Contraseña actual</label>'
+    +'<input type="password" id="pwd-cur" style="width:100%;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box"></div>'
+    +'<div style="margin-bottom:10px"><label style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;display:block;margin-bottom:4px">Nueva contraseña</label>'
+    +'<input type="password" id="pwd-new" placeholder="Mínimo 6 caracteres" style="width:100%;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box"></div>'
+    +'<div style="margin-bottom:12px"><label style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;display:block;margin-bottom:4px">Confirmar contraseña</label>'
+    +'<input type="password" id="pwd-conf" style="width:100%;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box"></div>'
+    +'<div id="pwd-err" style="color:#dc2626;font-size:12px;margin-bottom:8px;min-height:16px"></div>'
+    +'<button onclick="submitPwdChange()" style="width:100%;padding:11px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">Guardar</button>';
+  ov.appendChild(inner);
+  document.body.appendChild(ov);
+  document.getElementById('pwd-close-btn').onclick=function(){var o=document.getElementById('pwd-overlay');if(o)o.remove();};
+}
+
+function submitPwdChange() {
+  var isAdmin=S.auth&&S.auth.svId==='sv0';
+  var tgt=isAdmin&&document.getElementById('pwd-target') ? document.getElementById('pwd-target').value : (S.auth?S.auth.svId:'');
+  var cur=(document.getElementById('pwd-cur').value||'').trim();
+  var nw=(document.getElementById('pwd-new').value||'').trim();
+  var conf=(document.getElementById('pwd-conf').value||'').trim();
+  var errEl=document.getElementById('pwd-err');
+  if(!cur||!nw||!conf){errEl.textContent='Completa todos los campos.';return;}
+  if(nw.length<6){errEl.textContent='Mínimo 6 caracteres.';return;}
+  if(nw!==conf){errEl.textContent='Las contraseñas no coinciden.';return;}
+  if(!verifyPassword(S.auth?S.auth.svId:'',cur)){errEl.textContent='Contraseña actual incorrecta.';return;}
+  errEl.style.color='#2563eb';errEl.textContent='Guardando...';
+  if(!_authCache)_authCache={};
+  _authCache[tgt]=nw;
+  saveAuthPasswords(function(err){
+    if(err){errEl.style.color='#dc2626';errEl.textContent='Error al guardar.';return;}
+    var o=document.getElementById('pwd-overlay');if(o)o.remove();
+    var t=document.createElement('div');
+    t.style.cssText='position:fixed;bottom:16px;right:16px;z-index:9999;background:#dcfce7;border:1px solid #86efac;color:#15803d;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:600';
+    t.textContent='✓ Contraseña actualizada';
+    document.body.appendChild(t);
+    setTimeout(function(){t.remove();},3000);
+  });
+}
+
 </script>
 </body>
 </html>
